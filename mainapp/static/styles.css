@@ -1,0 +1,37 @@
+body {
+  background-color: grey;
+}
+
+.navbar {
+  margin-bottom: 2rem;
+}
+
+.card {
+  margin-bottom: 1.5rem;
+}
+
+.receipt {
+  font-family: monospace;
+  white-space: pre-line;
+}
+
+#receipt-content {
+  font-family: monospace;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #receipt-content,
+  #receipt-content * {
+    visibility: visible;
+  }
+
+  #receipt-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+  }
+}
