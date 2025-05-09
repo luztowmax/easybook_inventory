@@ -50,6 +50,7 @@
           <div class="col-md-4 mb-3">
             <h2>EasyBook Inventory Management</h2>
             <form id="add-item-form">
+              {% csrf_token %}
               <div class="mb-3">
                 <label for="item-name" class="form-label">Item Name</label>
                 <input

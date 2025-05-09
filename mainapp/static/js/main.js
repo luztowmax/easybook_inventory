@@ -1,469 +1,251 @@
-import { StorageManager } from "./storage.js";
-import { ReportManager } from "./reports.js";
+let inventory = []; 
+let cart = [];
 
-const storage = new StorageManager();
-const reports = new ReportManager();
+const authToken = "44bc34e1bc06b7334c7e51aeb9f1d4060dce5fd5";
 
-// Chart configurations
-const chartConfigs = {
-  topProducts: {
-    type: "bar",
-    options: {
-      responsive: true,
-      plugins: {
-        legend: {
-          position: "top",
-        },
-        title: {
-          display: true,
-          text: "Top Selling Products",
-        },
-      },
-    },
-  },
-  salesTrend: {
-    type: "line",
-    options: {
-      responsive: true,
-      plugins: {
-        legend: {
-          position: "top",
-        },
-        title: {
-          display: true,
-          text: "Sales Trends",
-        },
-      },
-    },
-  },
-  inventory: {
-    type: "pie",
-    options: {
-      responsive: true,
-      plugins: {
-        legend: {
-          position: "top",
-        },
-        title: {
-          display: true,
-          text: "Inventory Levels",
-        },
-      },
-    },
-  },
-  revenue: {
-    type: "doughnut",
-    options: {
-      responsive: true,
-      plugins: {
-        legend: {
-          position: "top",
-        },
-        title: {
-          display: true,
-          text: "Revenue Breakdown",
-        },
-      },
-    },
-  },
-};
+async function loadInventory() {
+  try {
+    const response = await fetch("/api/inventory/", {
+      method: "GET",
+      headers: {
+        "Authorization": `Token ${authToken}`,
+        "Content-Type": "application/json"
+      }
+    });
 
-// Initialize the application
-document.addEventListener("DOMContentLoaded", () => {
-  refreshInventoryTable();
-  refreshSaleItems();
-  setupEventListeners();
-  reports.updateCharts();
+    if (!response.ok) {
+      console.error("Failed to load inventory:", response.statusText);
+      inventory = [];
+      updateInventoryTable();
+      populateSaleItems();
+      return;
+    }
+    const data = await response.json();
+    if (!Array.isArray(data)) {
+      console.error("Inventory data is not an array:", data);
+      inventory = [];
+    } else {
+      inventory = data;
+    }
+    updateInventoryTable();
+    populateSaleItems();
+  } catch (error) {
+    console.error("Error loading inventory:", error);
+    inventory = [];
+    updateInventoryTable();
+    populateSaleItems();
+  }
+}
+
+function updateInventoryTable() {
+  const tableBody = document.getElementById("inventory-table");
+  tableBody.innerHTML = "";
+  inventory.forEach((item) => {
+    const row = `
+      <tr>
+        <td>${item.name}</td>
+        <td>${item.size}</td>
+        <td>₦${item.price}</td>
+        <td>${item.quantity}</td>
+        <td>
+          <button class="btn btn-danger btn-sm" onclick="deleteItem(${item.id})">Delete</button>
+        </td>
+      </tr>
+    `;
+    tableBody.innerHTML += row;
+  });
+}
+
+function getCookie(name) {
+  let cookieValue = null;
+  if (document.cookie && document.cookie !== "") {
+    const cookies = document.cookie.split(";");
+    for (let i = 0; i < cookies.length; i++) {
+      const cookie = cookies[i].trim();
+      if (cookie.startsWith(name + "=")) {
+        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+        break;
+      }
+    }
+  }
+  return cookieValue;
+}
+
+const csrftoken = getCookie("csrftoken");
+
+function populateSaleItems() {
+  const select = document.getElementById("sale-item");
+  select.innerHTML = '<option value="">Select an item...</option>';
+  inventory.forEach((item) => {
+    select.innerHTML += `<option value="${item.id}">${item.name} (${item.size})</option>`;
+  });
+}
+
+document.getElementById("add-item-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("item-name").value;
+  const size = document.getElementById("item-size").value;
+  const price = parseFloat(document.getElementById("item-price").value);
+  const quantity = parseInt(document.getElementById("item-quantity").value);
+
+  const response = await fetch("/api/inventory/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": csrftoken,
+      "Authorization": `Token ${authToken}`
+    },
+    credentials: "include",
+    body: JSON.stringify({ name, size, price, quantity }),
+  });
+
+  const result = await response.json();
+  console.log("Add item response:", result);
+
+  if (response.ok) {
+    await loadInventory();
+    e.target.reset();
+  }
 });
 
-function setupEventListeners() {
-  const addItemForm = document.getElementById("add-item-form");
-  if (addItemForm) {
-    addItemForm.addEventListener("submit", handleAddItem);
-  }
-  const saleForm = document.getElementById("sale-form");
-  if (saleForm) {
-    saleForm.addEventListener("submit", handleAddToCart);
-  }
-}
-
-function handleAddItem(e) {
+// Add item to cart
+document.getElementById("sale-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  try {
-    const nameInput = document.getElementById("item-name");
-    const priceInput = document.getElementById("item-price");
-    const quantityInput = document.getElementById("item-quantity");
-    const sizeInput = document.getElementById("item-size");
+  const itemId = parseInt(document.getElementById("sale-item").value);
+  const quantity = parseInt(document.getElementById("sale-quantity").value);
+  const item = inventory.find((i) => i.id === itemId);
 
-    if (!nameInput || !priceInput || !quantityInput || !sizeInput) {
-      throw new Error("Inventory form elements not found on this page.");
-    }
+  if (!item || quantity > item.quantity) return alert("Invalid quantity");
 
-    const name = nameInput.value.trim();
-    const price = parseFloat(priceInput.value);
-    const quantity = parseInt(quantityInput.value);
-    const size = sizeInput.value.trim();
-
-    validateItemInput(name, price, quantity, size);
-
-    storage.addItem({ name, price, quantity, size });
-    refreshInventoryTable();
-    refreshSaleItems();
-    e.target.reset();
-  } catch (error) {
-    alert(error.message);
+  const existing = cart.find((i) => i.id === item.id);
+  if (existing) {
+    existing.quantity += quantity;
+  } else {
+    cart.push({ ...item, quantity });
   }
-}
+  updateCart();
+  e.target.reset();
+});
 
-function validateItemInput(name, price, quantity, size) {
-  if (!name || typeof name !== "string" || name === "") {
-    throw new Error("Item name is required and must be a valid string.");
-  }
-  if (isNaN(price) || price <= 0) {
-    throw new Error("Price must be a positive number.");
-  }
-  if (isNaN(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
-    throw new Error("Quantity must be a positive integer.");
-  }
-  if (!size || typeof size !== "string" || size === "") {
-    throw new Error("Size is required and must be a valid string.");
-  }
-}
-
-function validateSaleInput(itemName, quantity, availableQuantity) {
-  if (!itemName) {
-    throw new Error("Please select an item.");
-  }
-  if (isNaN(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
-    throw new Error("Quantity must be a positive integer.");
-  }
-  if (quantity > availableQuantity) {
-    throw new Error("Insufficient stock for the selected item.");
-  }
-}
-
-function refreshInventoryTable() {
-  const items = storage.getItems();
-  const tbody = document.getElementById("inventory-table");
-  tbody.innerHTML = "";
-
-  items.forEach((item) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${item.name}</td>
-      <td>${item.size || ""}</td>
-      <td>N${item.price.toFixed(2)}</td>
-      <td>${item.quantity}</td>
-      <td>
-        <button class="btn btn-sm btn-danger" onclick="deleteItem('${
-          item.name
-        }', '${item.size}')">Delete</button>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
-function refreshSaleItems() {
-  const select = document.getElementById("sale-item");
-  const items = storage.getItems();
-  select.innerHTML = '<option value="">Select an item...</option>';
-
-  items.forEach((item) => {
-    const option = document.createElement("option");
-    option.value = item.name + "|" + item.size; // include size in value for uniqueness
-    option.textContent = `${item.name} (Size: ${
-      item.size || "N/A"
-    }) - N${item.price.toFixed(2)}`;
-    select.appendChild(option);
-  });
-}
-
-let currentCart = [];
-
-function handleAddToCart(e) {
-  e.preventDefault();
-  try {
-    const itemValue = document.getElementById("sale-item").value;
-    if (!itemValue) throw new Error("Please select an item.");
-    const [itemName, itemSize] = itemValue.split("|");
-    const quantity = parseInt(document.getElementById("sale-quantity").value);
-    // Removed customerName input reference as it is now prompted on completeSale
-    const item = storage
-      .getItems()
-      .find((i) => i.name === itemName && i.size === itemSize);
-
-    if (!item) {
-      throw new Error("Selected item not found in inventory.");
-    }
-
-    validateSaleInput(itemName, quantity, item.quantity);
-
-    currentCart.push({
-      name: item.name,
-      size: item.size,
-      quantity,
-      price: item.price,
-      total: item.price * quantity,
-    });
-
-    updateCartDisplay();
-    e.target.reset();
-  } catch (error) {
-    alert(error.message);
-  }
-}
-
-function updateCartDisplay() {
-  const tbody = document.getElementById("cart-items");
-  const totalElement = document.getElementById("cart-total");
-  tbody.innerHTML = "";
-
+function updateCart() {
+  const cartBody = document.getElementById("cart-items");
+  cartBody.innerHTML = "";
   let total = 0;
-  currentCart.forEach((item) => {
-    total += item.total;
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${item.name}</td>
-      <td>${item.size || ""}</td>
-      <td>${item.quantity}</td>
-      <td>N${item.price.toFixed(2)}</td>
-      <td>N${item.total.toFixed(2)}</td>
+
+  cart.forEach((item) => {
+    const itemTotal = item.price * item.quantity;
+    total += itemTotal;
+    const row = `
+      <tr>
+        <td>${item.name}</td>
+        <td>${item.size}</td>
+        <td>${item.quantity}</td>
+        <td>₦${item.price}</td>
+        <td>₦${itemTotal}</td>
+      </tr>
     `;
-    tbody.appendChild(tr);
+    cartBody.innerHTML += row;
   });
 
-  totalElement.textContent = `N${total.toFixed(2)}`;
+  document.getElementById("cart-total").textContent = `₦${total.toFixed(2)}`;
 }
 
-window.completeSale = function () {
-  try {
-    if (currentCart.length === 0) {
-      throw new Error("Cart is empty. Add items to complete the sale.");
-    }
+// Complete sale and get receipt
+async function completeSale() {
+  if (cart.length === 0) return alert("Cart is empty");
 
-    // Read customer name
-    const customerNameInput = document.getElementById("customer-name");
-    let customerName = customerNameInput ? customerNameInput.value.trim() : "";
+  const customerName = prompt("Enter customer's name:") || "Walk-in Customer";
+  const items = cart.map((item) => ({ item_id: item.id, quantity: item.quantity }));
 
-    // If no customer name, prompt for it
-    if (!customerName) {
-      customerName = prompt("Please enter Customer Name:");
-      if (!customerName || customerName.trim() === "") {
-        throw new Error("Customer name is required to complete the sale.");
-      }
-      customerName = customerName.trim();
-    }
-
-    // Update inventory
-    currentCart.forEach((item) => {
-      storage.updateItemQuantity(item.name, item.size, -item.quantity);
-    });
-
-    // Record sale
-    const sale = {
-      items: currentCart,
-      total: currentCart.reduce((sum, item) => sum + item.total, 0),
-      timestamp: new Date().toISOString(),
-      customerName: customerName,
-    };
-
-    storage.recordSale(sale);
-    currentCart = [];
-    updateCartDisplay();
-    refreshInventoryTable();
-    reports.updateCharts();
-    showReceipt(sale, customerName);
-    printReceipt();
-
-    // Clear customer name input after sale completion
-    if (customerNameInput) {
-      customerNameInput.value = "";
-    }
-  } catch (error) {
-    alert(error.message);
-  }
-};
-
-window.showReceipt = function (sale, customerName) {
-  const receiptContent = document.getElementById("receipt-content");
-  const date = new Date(sale.timestamp);
-
-  let receipt = `
-    EASYBOOK STORE RECEIPT
-    ------------------------------
-    Customer Name: ${customerName || sale.customerName || "Guest"}
-    Date: ${date.toLocaleDateString()} ${date.toLocaleTimeString()}
-    ------------------------------
-    
-    Items:
-  `;
-
-  sale.items.forEach((item) => {
-    receipt += `
-    ${item.name} (Size: ${item.size || "N/A"})
-    ${item.quantity} x N${item.price.toFixed(2)} = N${item.total.toFixed(2)}`;
+  const response = await fetch("/api/sales/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Token ${authToken}`
+    },
+    body: JSON.stringify({ items, customer_name: customerName }),
   });
 
-  receipt += `
-    ------------------------------
-    Total: N${sale.total.toFixed(2)}
-    
-    Thank you for patronizing us☺️\n    Hope to see you next time🌾!
-  `;
-
-  receiptContent.innerHTML = receipt;
-
-  const receiptModal = new bootstrap.Modal(
-    document.getElementById("receiptModal"),
-    {
-      backdrop: "static",
-      keyboard: false,
-    }
-  );
-
-  receiptModal.show();
-  document
-    .getElementById("receiptModal")
-    .addEventListener("shown.bs.modal", function () {
-      document.querySelector("#receiptModal .btn-primary").focus();
-    });
-};
-
-window.printReceipt = function () {
-  window.print();
-};
-
-window.deleteItem = function (itemName, size) {
-  if (confirm("Are you sure you want to delete this item?")) {
-    storage.deleteItem(itemName, size);
-    refreshInventoryTable();
-    refreshSaleItems();
+  if (response.ok) {
+    const receipt = await response.json();
+    displayReceipt(receipt);
+    cart = [];
+    updateCart();
+    await loadInventory();
   }
-};
+}
 
-window.showInventory = function () {
+function displayReceipt(receipt) {
+  let content = `Receipt ID: ${receipt.id}\n`;
+  content += `Customer: ${receipt.customer_name || 'Walk-in Customer'}\n`;
+  content += `Date: ${new Date(receipt.date).toLocaleString()}\n`;
+  content += `----------------------------------\n`;
+  receipt.items.forEach((item) => {
+    const unitPrice = item.total_price / item.quantity;
+    content += `${item.name} (${item.quantity} x ₦${unitPrice.toFixed(2)}) = ₦${item.total_price.toFixed(2)}\n`;
+  });
+  content += `----------------------------------\n`;
+  content += `Total: ₦${receipt.total.toFixed(2)}`;
+
+  document.getElementById("receipt-content").textContent = content;
+  const modal = new bootstrap.Modal(document.getElementById("receiptModal"));
+  modal.show();
+}
+
+// Print receipt
+function printReceipt() {
+  const receiptText = document.getElementById("receipt-content").textContent;
+  const win = window.open("", "Print", "width=600,height=600");
+  win.document.write(`<pre>${receiptText}</pre>`);
+  win.document.close();
+  win.print();
+}
+
+function showInventory() {
   document.getElementById("inventory-section").style.display = "block";
   document.getElementById("sales-section").style.display = "none";
   document.getElementById("reports-section").style.display = "none";
-};
+}
 
-window.showSales = function () {
+window.showInventory = showInventory;
+
+function showSales() {
   document.getElementById("inventory-section").style.display = "none";
   document.getElementById("sales-section").style.display = "block";
   document.getElementById("reports-section").style.display = "none";
-};
+}
 
-window.showReports = function () {
+window.showSales = showSales;
+
+function showReports() {
   document.getElementById("inventory-section").style.display = "none";
   document.getElementById("sales-section").style.display = "none";
   document.getElementById("reports-section").style.display = "block";
+}
 
-  initCharts();
-  reports.updateCharts();
-  reports.updateSalesSummaryTable(JSON.parse(localStorage.getItem('sales')) || []);
-};
+window.showReports = showReports;
 
-function initCharts() {
-  const topProductsCtx = document
-    .getElementById("topProductsChart")
-    .getContext("2d");
-  new Chart(topProductsCtx, {
-    type: chartConfigs.topProducts.type,
-    data: {
-      labels: [],
-      datasets: [
-        {
-          label: "Quantity Sold",
-          data: [],
-          backgroundColor: "rgba(54, 162, 235, 0.2)",
-          borderColor: "rgba(54, 162, 235, 1)",
-          borderWidth: 1,
-        },
-      ],
+// Initial load
+loadInventory();
+
+async function deleteItem(id) {
+  const password = prompt("Enter admin password to delete item:");
+  if (!password) return alert("Deletion cancelled. Password is required.");
+
+  const response = await fetch(`/api/inventory/${id}/`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Token ${authToken}`
     },
-    options: chartConfigs.topProducts.options,
+    body: JSON.stringify({ password }),
   });
 
-  const salesTrendCtx = document
-    .getElementById("salesTrendChart")
-    .getContext("2d");
-  new Chart(salesTrendCtx, {
-    type: chartConfigs.salesTrend.type,
-    data: {
-      labels: [],
-      datasets: [
-        {
-          label: "Sales",
-          data: [],
-          fill: false,
-          borderColor: "rgb(75, 192, 192)",
-          tension: 0.1,
-        },
-      ],
-    },
-    options: chartConfigs.salesTrend.options,
-  });
-
-  const inventoryCtx = document
-    .getElementById("inventoryChart")
-    .getContext("2d");
-  new Chart(inventoryCtx, {
-    type: chartConfigs.inventory.type,
-    data: {
-      labels: [],
-      datasets: [
-        {
-          label: "Inventory",
-          data: [],
-          backgroundColor: [
-            "rgba(255, 99, 132, 0.2)",
-            "rgba(54, 162, 235, 0.2)",
-            "rgba(255, 206, 86, 0.2)",
-            "rgba(75, 192, 192, 0.2)",
-            "rgba(153, 102, 255, 0.2)",
-          ],
-          borderColor: [
-            "rgba(255, 99, 132, 1)",
-            "rgba(54, 162, 235, 1)",
-            "rgba(255, 206, 86, 1)",
-            "rgba(75, 192, 192, 1)",
-            "rgba(153, 102, 255, 1)",
-          ],
-          borderWidth: 1,
-        },
-      ],
-    },
-    options: chartConfigs.inventory.options,
-  });
-
-  const revenueCtx = document.getElementById("revenueChart").getContext("2d");
-  new Chart(revenueCtx, {
-    type: chartConfigs.revenue.type,
-    data: {
-      labels: [],
-      datasets: [
-        {
-          label: "Revenue",
-          data: [],
-          backgroundColor: [
-            "rgba(255, 99, 132, 0.2)",
-            "rgba(54, 162, 235, 0.2)",
-            "rgba(255, 206, 86, 0.2)",
-            "rgba(75, 192, 192, 0.2)",
-            "rgba(153, 102, 255, 0.2)",
-          ],
-          borderColor: [
-            "rgba(255, 99, 132, 1)",
-            "rgba(54, 162, 235, 1)",
-            "rgba(255, 206, 86, 1)",
-            "rgba(75, 192, 192, 1)",
-            "rgba(153, 102, 255, 1)",
-          ],
-          borderWidth: 1,
-        },
-      ],
-    },
-    options: chartConfigs.revenue.options,
-  });
+  if (response.ok) {
+    await loadInventory();
+    alert("Item deleted successfully.");
+  } else {
+    const result = await response.json();
+    alert(result.error || "Failed to delete item.");
+  }
 }
